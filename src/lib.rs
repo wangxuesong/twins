@@ -1,7 +1,7 @@
 use anyhow::Result;
 use goblin::elf::Elf;
 use id_tree::InsertBehavior::{AsRoot, UnderNode};
-use id_tree::{Node, Tree, TreeBuilder};
+use id_tree::{Node, NodeId, Tree, TreeBuilder};
 
 type DependencyTree = Tree<BinaryFile>;
 type DependencyNode = Node<BinaryFile>;
@@ -29,7 +29,7 @@ impl BinaryFile {
 }
 
 pub fn parse_binary_file(path: &str) -> Result<DependencyTree> {
-    let data = std::fs::read(path.clone())?;
+    let data = std::fs::read(path)?;
     let elf = Elf::parse(&data)?;
     let mut is_executable = false;
     for header in elf.program_headers.iter() {
@@ -49,11 +49,15 @@ pub fn parse_binary_file(path: &str) -> Result<DependencyTree> {
 
     // Add dependencies nodes
     for dep in elf.libraries.iter() {
-        let dep_name = dep.to_string();
-        let file = BinaryFile::new(dep_name)?;
-        tree.insert(DependencyNode::new(file), UnderNode(&root_id))?;
+        parse_dependency(&mut tree, &root_id, dep.to_string())?;
     }
     Ok(tree)
+}
+
+fn parse_dependency(tree: &mut Tree<BinaryFile>, root_id: &NodeId, name: String) -> Result<NodeId> {
+    let file = BinaryFile::new(name)?;
+    let node_id = tree.insert(DependencyNode::new(file), UnderNode(root_id))?;
+    return Ok(node_id);
 }
 
 #[cfg(test)]
