@@ -1,6 +1,6 @@
 use anyhow::Result;
 use goblin::elf::Elf;
-use id_tree::InsertBehavior::AsRoot;
+use id_tree::InsertBehavior::{AsRoot, UnderNode};
 use id_tree::{Node, Tree, TreeBuilder};
 
 type DependencyTree = Tree<BinaryFile>;
@@ -15,25 +15,10 @@ pub struct BinaryFile {
 
 impl BinaryFile {
     pub fn new(path: String) -> Result<BinaryFile> {
-        let data = std::fs::read(path.clone())?;
-        let elf = Elf::parse(&data)?;
-        let mut is_executable = false;
-        for header in elf.program_headers.iter() {
-            if header.is_executable() {
-                is_executable = true;
-            }
-        }
-        let mut dependencies = vec![];
-        for dep in elf.libraries.iter() {
-            let dep_name = dep.to_string();
-            let file = BinaryFile::new(dep_name)?;
-            dependencies.push(file);
-        }
-
         let binary_file = BinaryFile {
             path,
             is_root: false,
-            is_executable,
+            is_executable: false,
         };
         Ok(binary_file)
     }
@@ -44,13 +29,30 @@ impl BinaryFile {
 }
 
 pub fn parse_binary_file(path: &str) -> Result<DependencyTree> {
+    let data = std::fs::read(path.clone())?;
+    let elf = Elf::parse(&data)?;
+    let mut is_executable = false;
+    for header in elf.program_headers.iter() {
+        if header.is_executable() {
+            is_executable = true;
+        }
+    }
+
+    // Add root node
     let mut tree = TreeBuilder::new().with_node_capacity(5).build();
     let root = BinaryFile {
         path: path.to_string(),
         is_root: true,
-        is_executable: false,
+        is_executable,
     };
-    tree.insert(DependencyNode::new(root), AsRoot)?;
+    let root_id = tree.insert(DependencyNode::new(root), AsRoot)?;
+
+    // Add dependencies nodes
+    for dep in elf.libraries.iter() {
+        let dep_name = dep.to_string();
+        let file = BinaryFile::new(dep_name)?;
+        tree.insert(DependencyNode::new(file), UnderNode(&root_id))?;
+    }
     Ok(tree)
 }
 
@@ -67,6 +69,8 @@ mod tests {
         let root_id = tree.root_node_id().unwrap();
         let root = tree.get(root_id).unwrap().data();
         assert_eq!(root.path, server_path.to_str().unwrap().to_string());
-        assert_eq!(tree.height(), 1);
+        assert_eq!(tree.height(), 2);
+        let children = tree.children(root_id).unwrap();
+        assert_eq!(children.into_iter().count(), 4);
     }
 }
