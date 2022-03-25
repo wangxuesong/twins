@@ -1,8 +1,8 @@
-use std::path::{Path, PathBuf};
 use anyhow::Result;
 use goblin::elf::Elf;
 use id_tree::InsertBehavior::{AsRoot, UnderNode};
 use id_tree::{Node, NodeId, Tree, TreeBuilder};
+use std::path::{Path, PathBuf};
 
 type DependencyTree = Tree<BinaryFile>;
 type DependencyNode = Node<BinaryFile>;
@@ -29,9 +29,8 @@ impl BinaryFile {
     }
 }
 
-#[derive(Debug, Clone)]
-pub struct DependencyAnalyzer {
-}
+#[derive(Debug, Clone, Default)]
+pub struct DependencyAnalyzer {}
 
 impl DependencyAnalyzer {
     pub fn new() -> DependencyAnalyzer {
@@ -42,7 +41,7 @@ impl DependencyAnalyzer {
         let p = PathBuf::from(path.as_ref());
         let data = std::fs::read(p)?;
         let elf = Elf::parse(&data)?;
-        let root = BinaryFile{
+        let root = BinaryFile {
             path: String::from(path.as_ref().to_str().unwrap()),
             is_root: true,
             is_executable: elf.program_headers.iter().any(|head| head.is_executable()),
@@ -55,12 +54,12 @@ impl DependencyAnalyzer {
 
         for dep in elf.libraries.iter() {
             let dep_path = PathBuf::from(dep);
-            let dep_file = BinaryFile{
+            let dep_file = BinaryFile {
                 path: String::from(dep_path.to_str().unwrap()),
                 is_root: false,
                 is_executable: false,
             };
-            let dep_node = tree.insert(DependencyNode::new(dep_file), UnderNode(&root_node))?;
+            tree.insert(DependencyNode::new(dep_file), UnderNode(&root_node))?;
         }
         Ok(tree)
     }
@@ -95,7 +94,7 @@ pub fn parse_binary_file(path: &str) -> Result<DependencyTree> {
 fn parse_dependency(tree: &mut Tree<BinaryFile>, root_id: &NodeId, name: String) -> Result<NodeId> {
     let file = BinaryFile::new(name)?;
     let node_id = tree.insert(DependencyNode::new(file), UnderNode(root_id))?;
-    return Ok(node_id);
+    Ok(node_id)
 }
 
 #[cfg(test)]
