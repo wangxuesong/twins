@@ -32,14 +32,25 @@ impl BinaryFile {
 }
 
 #[derive(Debug, Clone, Default)]
-pub struct DependencyAnalyzer {}
+pub struct DependencyAnalyzer {
+    default_ld_paths: Vec<String>,
+}
 
 impl DependencyAnalyzer {
     pub fn new() -> DependencyAnalyzer {
-        DependencyAnalyzer {}
+        DependencyAnalyzer {
+            default_ld_paths: vec![
+                "/lib/x86_64-linux-gnu/".to_string(),
+                "/lib64/".to_string(),
+                "/lib/".to_string(),
+                "/usr/lib/x86_64-linux-gnu/".to_string(),
+                "/usr/lib64/".to_string(),
+                "/usr/lib/".to_string(),
+            ],
+        }
     }
 
-    #[cfg(target_os="linux")]
+    #[cfg(target_os = "linux")]
     pub fn analyze(&self, path: impl AsRef<Path>) -> Result<DependencyTree> {
         let p = PathBuf::from(path.as_ref());
         let data = std::fs::read(p)?;
@@ -67,20 +78,33 @@ impl DependencyAnalyzer {
         name: String,
     ) -> Result<NodeId> {
         let dep_path = PathBuf::from(name);
+        let dep_file = self.find_library(dep_path)?;
+        let path = dep_file.path.clone();
+        let node_id = tree.insert(DependencyNode::new(dep_file), UnderNode(root_node))?;
+
+        let data = std::fs::read(path)?;
+        let elf = Elf::parse(&data)?;
+        for dep in elf.libraries.iter() {
+            self.parse_dependency(tree, &node_id, dep.to_string())?;
+        }
+        Ok(node_id)
+    }
+
+    fn find_library(&self, dep_path: PathBuf) -> Result<BinaryFile> {
+        for ld_path in self.default_ld_paths.iter() {
+            let mut path = PathBuf::from(ld_path);
+            path.push(dep_path.clone());
+            if path.exists() {
+                return BinaryFile::new(path.to_string_lossy().to_string());
+            }
+        }
         let dep_file = BinaryFile {
             path: dep_path.to_string_lossy().to_string(),
             interpreter: None,
             is_root: false,
             is_executable: false,
         };
-        let node_id = tree.insert(DependencyNode::new(dep_file), UnderNode(root_node))?;
-
-        // let data = std::fs::read(dep_path.clone())?;
-        // let elf = Elf::parse(&data)?;
-        // for dep in elf.libraries.iter() {
-        //     self.parse_dependency(tree, &node_id, dep.to_string())?;
-        // }
-        Ok(node_id)
+        Ok(dep_file)
     }
 }
 
@@ -104,10 +128,16 @@ mod tests {
             root.interpreter,
             Some("/lib64/ld-linux-x86-64.so.2".to_string())
         );
-        assert_eq!(tree.height(), 2);
-        let children = tree.children(root_id).unwrap();
+        assert_eq!(tree.height(), 3);
+        let children = tree.children_ids(root_id).unwrap();
         assert_eq!(children.clone().into_iter().count(), 1);
-        let child = children.into_iter().next().unwrap().data();
-        assert_eq!(child.path, "libc.so.6".to_string());
+        let child_id = children.into_iter().next().unwrap();
+        let file = tree.get(child_id).unwrap().data();
+        assert_eq!(file.path, "/lib/x86_64-linux-gnu/libc.so.6".to_string());
+        let children = tree.children_ids(child_id).unwrap();
+        assert_eq!(children.clone().into_iter().count(), 1);
+        let child_id = children.into_iter().next().unwrap();
+        let file = tree.get(child_id).unwrap().data();
+        assert_eq!(file.path, "/lib/x86_64-linux-gnu/ld-linux-x86-64.so.2".to_string());
     }
 }

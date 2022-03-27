@@ -7,7 +7,7 @@ fn elf_class_test() {
     let fizz64_path = data_path.join("bin/fizz-buzz-glibc-64");
     let data = std::fs::read(fizz64_path).unwrap();
     let elf64 = Elf::parse(&*data).unwrap();
-    assert_eq!(elf64.is_64, true);
+    assert!(elf64.is_64);
 }
 
 #[test]
@@ -16,7 +16,7 @@ fn read_elf_linker_file_test() {
     let fizz64_path = data_path.join("bin/fizz-buzz-glibc-64");
     let data = std::fs::read(fizz64_path).unwrap();
     let elf64 = Elf::parse(&*data).unwrap();
-    assert_eq!(elf64.is_64, true);
+    assert!(elf64.is_64);
     assert_eq!(elf64.interpreter, Some("/lib64/ld-linux-x86-64.so.2"));
 }
 
@@ -26,7 +26,7 @@ fn find_direct_dependencies_test() {
     let fizz64_path = data_path.join("bin/fizz-buzz-glibc-64");
     let data = std::fs::read(fizz64_path).unwrap();
     let elf64 = Elf::parse(&*data).unwrap();
-    assert_eq!(elf64.is_64, true);
+    assert!(elf64.is_64);
     assert_eq!(elf64.libraries.len(), 1);
     assert_eq!(elf64.libraries[0], "libc.so.6");
     assert_eq!(elf64.runpaths.len(), 0);
@@ -34,7 +34,7 @@ fn find_direct_dependencies_test() {
     let server_path = data_path.join("bin/server");
     let data = std::fs::read(server_path).unwrap();
     let elf_server = Elf::parse(&*data).unwrap();
-    assert_eq!(elf_server.is_64, true);
+    assert!(elf_server.is_64);
     assert_eq!(elf_server.interpreter, Some("/lib64/ld-linux-x86-64.so.2"));
     assert_eq!(elf_server.libraries.len(), 4);
     assert_eq!(elf_server.libraries[0], "libcraft.so");
