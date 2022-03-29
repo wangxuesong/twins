@@ -2,12 +2,12 @@ use anyhow::Result;
 use goblin::elf::Elf;
 use id_tree::InsertBehavior::{AsRoot, UnderNode};
 use id_tree::{Node, NodeId, Tree, TreeBuilder};
+use std::fmt::{self, Debug};
 use std::path::{Path, PathBuf};
 
 type DependencyTree = Tree<BinaryFile>;
 type DependencyNode = Node<BinaryFile>;
 
-#[derive(Debug)]
 pub struct BinaryFile {
     pub name: String,
     pub real_path: Option<String>,
@@ -33,27 +33,46 @@ impl BinaryFile {
     }
 }
 
+impl fmt::Display for BinaryFile {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "{}", self.name)
+    }
+}
+
+impl Debug for BinaryFile {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(
+            f,
+            "{}({})",
+            self.name,
+            self.real_path.as_ref().unwrap_or(&"None".to_string()),
+        )
+    }
+}
+
 #[derive(Debug, Clone, Default)]
 pub struct DependencyAnalyzer {
     default_ld_paths: Vec<String>,
+    interpreter: String,
 }
 
 impl DependencyAnalyzer {
     pub fn new() -> DependencyAnalyzer {
         DependencyAnalyzer {
             default_ld_paths: vec![
-                "/lib/x86_64-linux-gnu/".to_string(),
                 "/lib64/".to_string(),
                 "/lib/".to_string(),
-                "/usr/lib/x86_64-linux-gnu/".to_string(),
+                "/lib/x86_64-linux-gnu/".to_string(),
                 "/usr/lib64/".to_string(),
                 "/usr/lib/".to_string(),
+                "/usr/lib/x86_64-linux-gnu/".to_string(),
             ],
+            interpreter: "".to_string(),
         }
     }
 
     #[cfg(target_os = "linux")]
-    pub fn analyze(&self, path: impl AsRef<Path>) -> Result<DependencyTree> {
+    pub fn analyze(&mut self, path: impl AsRef<Path>) -> Result<DependencyTree> {
         let p = PathBuf::from(path.as_ref());
         let data = std::fs::read(p)?;
         let elf = Elf::parse(&data)?;
@@ -64,6 +83,7 @@ impl DependencyAnalyzer {
             is_root: true,
             is_executable: elf.program_headers.iter().any(|head| head.is_executable()),
         };
+        self.interpreter = root.interpreter.clone().unwrap_or_default();
         let mut tree = TreeBuilder::new().build();
 
         let root_node = tree.insert(DependencyNode::new(root), AsRoot)?;
@@ -90,6 +110,14 @@ impl DependencyAnalyzer {
             let data = std::fs::read(real_path)?;
             let elf = Elf::parse(&data)?;
             for dep in elf.libraries.iter() {
+                let interpreter = Path::new(self.interpreter.as_str())
+                    .file_name()
+                    .unwrap()
+                    .to_string_lossy()
+                    .to_string();
+                if interpreter == *dep {
+                    continue;
+                }
                 self.parse_dependency(tree, &node_id, dep.to_string())?;
             }
         }
@@ -102,7 +130,7 @@ impl DependencyAnalyzer {
             path.push(dep_path.clone());
             if path.exists() {
                 return Ok(BinaryFile {
-                    name: path.to_string_lossy().to_string(),
+                    name: path.file_name().unwrap().to_string_lossy().to_string(),
                     real_path: Some(path.to_string_lossy().to_string()),
                     interpreter: None,
                     is_root: false,
@@ -131,7 +159,7 @@ mod tests {
     fn parse_fizz() {
         let data_path = Path::new(std::env!("CARGO_MANIFEST_DIR")).join("tests/elfbin");
         let fizz_path = data_path.join("bin/fizz-buzz-glibc-64");
-        let analyzer = DependencyAnalyzer::new();
+        let mut analyzer = DependencyAnalyzer::new();
         let tree = analyzer.analyze(fizz_path.clone()).unwrap();
         // let tree = parse_binary_file(server_path.to_str().unwrap()).unwrap();
         let root_id = tree.root_node_id().unwrap();
@@ -161,7 +189,7 @@ mod tests {
     fn parse_server() {
         let data_path = Path::new(std::env!("CARGO_MANIFEST_DIR")).join("tests/elfbin");
         let server_path = data_path.join("bin/server");
-        let analyzer = DependencyAnalyzer::new();
+        let mut analyzer = DependencyAnalyzer::new();
         let tree = analyzer.analyze(server_path.clone()).unwrap();
 
         let root_id = tree.root_node_id().unwrap();
@@ -171,5 +199,35 @@ mod tests {
             root.interpreter,
             Some("/lib64/ld-linux-x86-64.so.2".to_string())
         );
+        let children_ids = tree.children_ids(root_id).unwrap();
+        let mut children_id_iter = children_ids;
+        let mut child_id = children_id_iter.next().unwrap();
+        let mut child = tree.get(child_id).unwrap().data();
+        assert_eq!(child.name, "libcraft.so".to_string());
+        assert_eq!(child.real_path, None);
+        child_id = children_id_iter.next().unwrap();
+        child = tree.get(child_id).unwrap().data();
+        assert_eq!(child.name, "libpthread.so.0".to_string());
+        assert_eq!(
+            child.real_path,
+            Some("/lib/x86_64-linux-gnu/libpthread.so.0".to_string())
+        );
+        child_id = children_id_iter.next().unwrap();
+        child = tree.get(child_id).unwrap().data();
+        assert_eq!(child.name, "libdl.so.2".to_string());
+        assert_eq!(
+            child.real_path,
+            Some("/lib/x86_64-linux-gnu/libdl.so.2".to_string())
+        );
+        child_id = children_id_iter.next().unwrap();
+        child = tree.get(child_id).unwrap().data();
+        assert_eq!(child.name, "libc.so.6".to_string());
+        assert_eq!(
+            child.real_path,
+            Some("/lib/x86_64-linux-gnu/libc.so.6".to_string())
+        );
+        // let mut s = String::new();
+        // tree.write_formatted(&mut s).unwrap();
+        // assert_eq!(s, "", "{}", s);
     }
 }
